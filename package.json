@@ -5,10 +5,15 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "postinstall": "prisma generate",
+    "vercel-build": "prisma migrate deploy && next build",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:deploy": "prisma migrate deploy"
   },
   "dependencies": {
     "@prisma/client": "^6.16.2",
+    "@vercel/blob": "^0.27.3",
     "bcryptjs": "^3.0.3",
     "next": "16.3.5",
     "nodemailer": "^10.0.12",
@@ -33,6 +38,6 @@
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
-    "workerd@1.20260901.1": true
+    "workerd@1.20260901.000": true
   }
 }

@@ -2,7 +2,8 @@
    CLICSTORE — Endpoint POST /api/orders/[id]/proof
    ----------------------------------------------------------------------------
    Este endpoint recibe el comprobante de pago del cliente, lo guarda en
-   disco, actualiza la base de datos, y dispara las notificaciones al admin:
+   Vercel Blob (almacenamiento externo), actualiza la base de datos, y
+   dispara las notificaciones al admin:
 
      1. Correo electrónico a lxmultiservicios@gmail.com (automático).
      2. Notificación por WhatsApp (link preparado para que el cliente lo
@@ -12,7 +13,7 @@
    --------------
      1. El cliente sube un archivo (JPG, PNG o PDF, máx 5 MB).
      2. Validamos tipo y tamaño.
-     3. Guardamos el archivo en public/uploads/proofs/.
+     3. Subimos el archivo a Vercel Blob.
      4. Creamos/actualizamos el PaymentProof.
      5. Actualizamos Payment.status y Order.paymentStatus a COMPROBANTE_SUBIDO.
      6. Creamos un OrderEvent (auditoría).
@@ -23,27 +24,26 @@
    ---------
    - Solo se aceptan 3 tipos MIME: image/jpeg, image/png, application/pdf.
    - Tamaño máximo: 5 MB.
-   - El nombre del archivo se genera con el id del pedido (evita inyección
-     de rutas y colisiones).
-   - El archivo se guarda fuera del alcance de ejecución (solo como estático).
+   - El nombre del archivo se genera con el id del pedido + timestamp
+     (evita colisiones y permite saber a qué pedido pertenece).
+   - El archivo vive en Vercel Blob (almacenamiento persistente en la nube).
 
-   NOTA PARA PRODUCCIÓN
-   --------------------
-   Guardar archivos en el sistema local (public/) funciona en desarrollo
-   y en servidores con disco persistente. Si más adelante se despliega en
-   Vercel u otro hosting serverless, habrá que migrar a almacenamiento
-   externo (S3, Cloudflare R2, etc.). La estructura del código ya está
-   preparada para ese cambio (solo se modifica la parte de guardado).
+   ¿POR QUÉ VERCEL BLOB Y NO DISCO LOCAL?
+   -------------------------------------
+   Vercel es serverless: el sistema de archivos local es de SOLO LECTURA
+   excepto /tmp (que se borra en cada invocación). Guardar en public/ no
+   funciona en producción. Vercel Blob es la solución nativa de Vercel para
+   almacenamiento persistente de archivos, sin configuración extra.
+
+   La variable de entorno BLOB_READ_WRITE_TOKEN la inyecta Vercel
+   automáticamente cuando creas el Blob store en el panel.
    ============================================================================ */
 
 // Tipos de Next.js para request/response.
 import { NextResponse } from "next/server";
 
-// API de Node.js para escribir archivos en disco.
-import { writeFile, mkdir } from "fs/promises";
-
-// Utilidad de rutas.
-import path from "path";
+// SDK de Vercel Blob para subir archivos.
+import { put } from "@vercel/blob";
 
 // Cliente Prisma compartido.
 import { prisma } from "@/lib/db";
@@ -78,17 +78,6 @@ const ALLOWED_MIME_TYPES = [
   "image/png",
   "application/pdf",
 ];
-
-/**
- * Mapeo de tipo MIME → extensión de archivo.
- * Se usa para generar el nombre del archivo guardado.
- */
-const MIME_TO_EXT: Record<string, string> = {
-  "image/jpeg": ".jpg",
-  "image/jpg": ".jpg",
-  "image/png": ".png",
-  "application/pdf": ".pdf",
-};
 
 
 /* ============================================================================
@@ -185,29 +174,28 @@ export async function POST(
   }
 
   /* ------------------------------------------------------------------------
-     PASO 6 — Guardar el archivo en disco
+     PASO 6 — Subir el archivo a Vercel Blob
      ------------------------------------------------------------------------
-     Ruta: public/uploads/proofs/[orderId]-[timestamp].[ext]
-     El nombre se genera con el id del pedido + timestamp para evitar
-     colisiones y para saber a qué pedido pertenece.
+     Ruta dentro del Blob: proofs/[orderId]-[timestamp]-[nombre-original]
+     El nombre incluye el id del pedido + timestamp para evitar colisiones
+     y para saber a qué pedido pertenece.
      ------------------------------------------------------------------------ */
-  const ext = MIME_TO_EXT[file.type] ?? ".bin";
   const timestamp = Date.now();
-  const safeFileName = `${orderId}-${timestamp}${ext}`;
+  const ext = file.name.split(".").pop() ?? "bin";
+  const blobPath = `proofs/${orderId}-${timestamp}.${ext}`;
 
-  const uploadsDir = path.join(process.cwd(), "public", "uploads", "proofs");
-  const filePath = path.join(uploadsDir, safeFileName);
-  const publicUrl = `/uploads/proofs/${safeFileName}`;
+  let publicUrl: string;
 
   try {
-    // Asegurar que la carpeta existe.
-    await mkdir(uploadsDir, { recursive: true });
+    const blob = await put(blobPath, file, {
+      access: "public",
+      addRandomSuffix: false, // ya incluimos orderId + timestamp
+      contentType: file.type,
+    });
 
-    // Leer el archivo como ArrayBuffer y guardarlo.
-    const arrayBuffer = await file.arrayBuffer();
-    await writeFile(filePath, Buffer.from(arrayBuffer));
+    publicUrl = blob.url;
   } catch (err) {
-    console.error("[POST /api/orders/[id]/proof] Error guardando archivo:", err);
+    console.error("[POST /api/orders/[id]/proof] Error subiendo a Blob:", err);
     return NextResponse.json(
       { error: "No pudimos guardar tu comprobante. Intenta de nuevo." },
       { status: 500 }
