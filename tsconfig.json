@@ -1,23 +1,56 @@
 {
   "compilerOptions": {
+    // Compilamos al estándar ES2017 (compatible con Next.js 16).
     "target": "ES2017",
+
+    // Librerías de tipos incluidas (DOM para el navegador, ES para Node).
     "lib": ["dom", "dom.iterable", "esnext"],
+
+    // Permitimos archivos .js junto a .ts (necesario para Next.js).
     "allowJs": true,
+
+    // Omitimos verificación dentro de node_modules (más rápido).
     "skipLibCheck": true,
+
+    // Modo estricto de TypeScript (detecta más errores).
     "strict": true,
+
+    // No emitimos archivos .js (Next.js se encarga del build).
     "noEmit": true,
+
+    // Interoperabilidad con módulos CommonJS.
     "esModuleInterop": true,
+
+    // Sistema de módulos: ESNext (import / export).
     "module": "esnext",
+
+    // Resolución de módulos: "bundler" (moderna).
     "moduleResolution": "bundler",
+
+    // Permite importar archivos .json directamente.
     "resolveJsonModule": true,
+
+    // Cada archivo debe compilarse de forma aislada.
     "isolatedModules": true,
+
+    // Transformación de JSX: react-jsx (nuevo sistema).
     "jsx": "react-jsx",
+
+    // Compilación incremental (más rápido en la segunda compilación).
     "incremental": true,
+
+    // Plugins del editor (Next.js provee autocompletado).
     "plugins": [
       {
         "name": "next"
       }
     ],
+
+    // MAPEO DE ALIAS:
+    // "@/lib/money" → "./src/lib/money.ts"
+    // "@/config/business" → "./src/config/business.ts"
+    // Las rutas son relativas a la ubicación de ESTE tsconfig.json.
+    // No se necesita "baseUrl" (eliminado por deprecación en TS 7.0).
     "paths": {
       "@/*": ["./src/*"]
     }

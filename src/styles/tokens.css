@@ -1,0 +1,67 @@
+/* ============================================================
+   CLICSTORE — Design tokens
+   ------------------------------------------------------------
+   Valores centrales de diseño: colores, radios, sombras, medidas.
+   Modo claro por defecto, modo oscuro al activar .dark en <html>.
+
+   IMPORTANTE: las fuentes (--font-sans, --font-display) NO se
+   declaran aquí porque Next.js las genera automáticamente vía
+   next/font/google en src/app/layout.tsx. Aquí solo se USAN.
+   ============================================================ */
+
+:root {
+  /* --- Fondos y superficies --- */
+  --bg: 250 250 252;              /* Fondo general de la app (gris muy claro) */
+  --surface: 255 255 255;         /* Superficie de tarjetas/modales (blanco) */
+  --surface-2: 244 245 248;       /* Superficie secundaria (hover, subpaneles) */
+  --border: 226 229 234;          /* Color de bordes y separadores */
+
+  /* --- Texto --- */
+  --text: 17 20 24;               /* Texto principal (casi negro) */
+  --text-muted: 90 96 105;        /* Texto secundario/apagado (gris) */
+
+  /* --- Marca --- */
+  --primary: 20 100 240;          /* Azul principal (botones, links) */
+  --primary-fg: 255 255 255;      /* Texto/icono sobre fondo primary (blanco) */
+
+  /* --- Estados --- */
+  --danger: 200 40 40;            /* Errores, eliminar, rechazado (rojo) */
+  --success: 22 140 80;           /* Éxito, aprobado, verificado (verde) */
+  --warning: 190 130 20;          /* Advertencia, pendiente (ámbar) */
+
+  /* --- Sombras --- */
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.06);
+
+  /* --- Radios --- */
+  --radius-sm: 0.5rem;            /* 8px  — inputs pequeños */
+  --radius-md: 0.75rem;           /* 12px — botones, cards */
+  --radius-lg: 1rem;              /* 16px — modales */
+  --radius-xl: 1.25rem;           /* 20px — contenedores grandes */
+
+  /* --- Ancho máximo del contenido --- */
+  --container-max: 1280px;
+}
+
+.dark {
+  /* --- Fondos y superficies (modo oscuro) --- */
+  --bg: 12 14 18;                 /* Casi negro azulado */
+  --surface: 20 23 28;            /* Superficie principal */
+  --surface-2: 28 32 38;          /* Superficie secundaria */
+  --border: 44 49 58;             /* Bordes sutiles */
+
+  /* --- Texto --- */
+  --text: 235 238 242;            /* Texto principal (blanco roto) */
+  --text-muted: 150 158 170;      /* Texto secundario */
+
+  /* --- Marca --- */
+  --primary: 90 150 255;          /* Azul más claro para contraste en oscuro */
+  --primary-fg: 12 14 18;         /* Texto/icono sobre primary (oscuro) */
+
+  /* --- Estados --- */
+  --danger: 240 100 100;          /* Rojo más claro */
+  --success: 90 210 140;          /* Verde más claro */
+  --warning: 230 180 80;          /* Ámbar más claro */
+
+  /* --- Sombra más intensa para modo oscuro --- */
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.4);
+}

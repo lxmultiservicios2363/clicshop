@@ -1,0 +1,407 @@
+// ============================================================================
+// CLICSTORE — Esquema de la base de datos (Prisma 6.16.2)
+// ----------------------------------------------------------------------------
+// Este archivo define TODAS las tablas, sus columnas y sus relaciones.
+// Prisma lo usa para:
+//   1. Crear las tablas en PostgreSQL (npx prisma migrate dev)
+//   2. Generar un cliente TypeScript con tipos automáticos
+//   3. Validar las consultas en tiempo de compilación
+//
+// REGLAS DE ORO DEL PROYECTO:
+//   - Todo el dinero se guarda en CENTAVOS ENTEROS (Int), nunca decimales.
+//     Ejemplo: $18.00 → 1800. Esto evita errores de redondeo.
+//   - Los productos NUNCA se eliminan, solo se desactivan (active = false),
+//     para preservar el histórico de pedidos.
+//   - Los pedidos guardan SNAPSHOTS (nombre, precio, categoría) para que un
+//     cambio futuro de producto no altere pedidos pasados.
+//   - Los colores se guardan como ARRAY (String[]) porque un mismo producto
+//     puede combinar hasta 4 colores distintos (ej: ["Rojo", "Beige", "Gris"]).
+// ============================================================================
+
+// ============================================================================
+// GENERADOR Y DATASOURCE
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+
+  // URL "pooled" — la usa la aplicación en cada request
+  url = env("DATABASE_URL")
+
+  // URL "directa" — la usan las migraciones de Prisma
+  // (evita el error "prepared statement s0 already exists" con Neon)
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+// ============================================================================
+// CONFIGURACIÓN DEL NEGOCIO (editable desde el panel admin)
+// ============================================================================
+
+// Tabla clave-valor para guardar configuraciones flexibles: IVA, banco,
+// datos del negocio, tema, etc. El valor es JSON para máxima flexibilidad.
+model Setting {
+  key       String   @id // Clave única (ej: "bank", "tax.ivaRateBp")
+  value     Json // Valor JSON (cualquier estructura)
+  updatedAt DateTime @updatedAt // Última modificación
+}
+
+// ============================================================================
+// USUARIOS
+// ============================================================================
+
+// Roles disponibles en el sistema
+enum Role {
+  CUSTOMER // Cliente normal (compra productos)
+  ADMIN // Administrador (gestiona la tienda)
+}
+
+// Personas que usan el sistema: clientes registrados y administradores
+model User {
+  id           String  @id @default(cuid())
+  email        String  @unique // Email único, usado para login
+  passwordHash String // Hash bcrypt (NUNCA texto plano)
+  name         String?
+  phone        String?
+  role         Role    @default(CUSTOMER)
+
+  orders    Order[] // Pedidos realizados
+  favorites Favorite[] // Productos favoritos
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+}
+
+// ============================================================================
+// CATÁLOGO
+// ============================================================================
+
+// Categorías de productos.
+// En ClicStore: "Cuello en V" y "Cuello redondo"
+model Category {
+  id          String  @id @default(cuid())
+  name        String  @unique // "Cuello en V"
+  slug        String  @unique // "cuello-en-v" (URL amigable)
+  description String? // Descripción larga opcional
+  order       Int     @default(0) // Orden en el menú
+
+  products   Product[] // Productos de esta categoría
+  priceRules PriceRule[] // Reglas de precio por cantidad
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Reglas de precio escalonado por cantidad dentro de una categoría.
+// Ejemplo para "Cuello en V":
+//   minQuantity=1 → priceCents=1500 ($15.00)
+//   minQuantity=2 → priceCents=1400 ($14.00)
+//   minQuantity=3 → priceCents=1250 ($12.50)
+// El sistema aplicará la regla con la MAYOR minQuantity que se cumpla.
+model PriceRule {
+  id String @id @default(cuid())
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  minQuantity Int // Cantidad mínima para este precio (1, 2, 3...)
+  priceCents  Int // Precio unitario en centavos
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // No puede haber dos reglas con la misma cantidad mínima en la misma categoría
+  @@unique([categoryId, minQuantity])
+  @@index([categoryId])
+}
+
+// Producto del catálogo. Cada uno es un MODELO único con sus colores.
+// Ejemplo: "Suéter Cuello V Rojo/Beige" es un Product.
+// En ClicStore tendremos 70 Products (17 cuello V + 53 cuello redondo).
+model Product {
+  id String @id @default(cuid())
+
+  name        String // "Suéter Cuello V #01"
+  slug        String  @unique // "sueter-cuello-v-01" (URL)
+  description String // Descripción larga
+  shortDesc   String? // Descripción corta (cards)
+
+  // Precio base en centavos (referencia).
+  // El precio real se calcula con las PriceRules según cantidad.
+  basePriceCents Int
+
+  sku        String  @unique // "CS-V-01", "CS-R-01"
+  fabricante String? // "Cristian Andres"
+
+  // Imágenes: array de rutas.
+  // Ejemplo: ["/images/products/cs-v-01.png", "/images/products/cs-v-01-b.png"]
+  images String[] @default([])
+
+  // Colores del producto: hasta 4 colores combinados.
+  // Ejemplo: ["Rojo", "Beige", "Gris"] o ["Azul marino", "Blanco"]
+  colors String[] @default([])
+
+  active   Boolean  @default(true) // Visible en la tienda
+  featured Boolean  @default(false) // ¿Destacado en home?
+  tags     String[] @default([]) // Etiquetas para búsqueda
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  variants   Variant[] // Variantes por talla
+  orderItems OrderItem[] // Apariciones en pedidos
+  favorites  Favorite[] // Marcado como favorito
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+  @@index([active])
+  @@index([slug])
+}
+
+// Variante de un producto: combinación Product + Talla.
+// Ejemplo: "Suéter Cuello V #01" + Talla M.
+// Aquí vive el STOCK real y el SKU final.
+model Variant {
+  id String @id @default(cuid())
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  size  String? // "S", "M", "L", "XL"
+  color String? // Color específico de la variante (opcional)
+
+  sku   String @unique // "CS-V-01-M", "CS-R-05-L"
+  stock Int    @default(0) // Unidades disponibles
+
+  // Precio opcional específico de la variante (override).
+  // Si es null, se usa el precio calculado por PriceRules.
+  priceCents Int?
+
+  orderItems OrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+  @@index([sku])
+}
+
+// ============================================================================
+// PEDIDOS
+// ============================================================================
+
+// Estados del pedido (flujo logístico)
+enum OrderStatus {
+  RECIBIDO
+  CONFIRMADO
+  PREPARANDO
+  ENVIADO
+  ENTREGADO
+  CANCELADO
+}
+
+// Estados del pago (flujo financiero) — INDEPENDIENTE del estado del pedido
+enum PaymentStatus {
+  PENDIENTE
+  COMPROBANTE_SUBIDO
+  EN_VERIFICACION
+  VERIFICADO
+  RECHAZADO
+  REEMBOLSADO
+}
+
+// Métodos de pago disponibles
+enum PaymentMethod {
+  BANK_TRANSFER // Transferencia bancaria
+  ONLINE // Pasarela online (futuro)
+}
+
+// Pedido realizado por un cliente.
+// Guarda SNAPSHOT del cliente y de los montos porque aunque cambien
+// los datos originales, el pedido histórico debe permanecer intacto.
+model Order {
+  id     String @id @default(cuid())
+  number Int    @unique @default(autoincrement()) // Número visible
+
+  // Cliente (opcional si es invitado; referencia a User si está registrado)
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  // SNAPSHOT del cliente al momento del pedido
+  customerName  String
+  customerEmail String
+  customerPhone String
+
+  // SNAPSHOT de la dirección de entrega
+  province    String
+  city        String
+  addressLine String
+  reference   String?
+
+  // Montos en centavos
+  subtotalCents Int // Suma antes de descuentos
+  discountCents Int @default(0) // Descuento total aplicado
+  taxableCents  Int // subtotal - descuento
+  ivaRateBp     Int // Tasa IVA en basis points (1500 = 15%)
+  ivaCents      Int // IVA calculado
+  shippingCents Int @default(0) // Envío
+  totalCents    Int // Total final
+
+  currency String @default("USD")
+
+  // Estados (independientes entre sí)
+  orderStatus   OrderStatus   @default(RECIBIDO)
+  paymentStatus PaymentStatus @default(PENDIENTE)
+  paymentMethod PaymentMethod
+
+  // Relaciones
+  items   OrderItem[]
+  payment Payment?
+  proof   PaymentProof?
+  events  OrderEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([orderStatus])
+  @@index([paymentStatus])
+  @@index([createdAt])
+}
+
+// Ítem individual dentro de un pedido.
+// Guarda snapshot de todo porque el producto puede cambiar después.
+model OrderItem {
+  id String @id @default(cuid())
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  // Referencias al producto y variante originales.
+  // Los productos NO se eliminan, solo se desactivan, por eso la relación
+  // puede ser estricta sin riesgo de perder histórico.
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  variantId String?
+  variant   Variant? @relation(fields: [variantId], references: [id])
+
+  // SNAPSHOT del producto al momento de la compra
+  productName String // "Suéter Cuello V #01"
+  sku         String // "CS-V-01-M"
+  size        String? // "M"
+  color       String? // "Rojo/Beige" (colores combinados como texto en el pedido)
+
+  // SNAPSHOT de la categoría (para saber qué PriceRule se aplicó)
+  categoryId   String
+  categoryName String // "Cuello en V"
+
+  // Cantidad y precios aplicados (con descuento por cantidad)
+  quantity       Int
+  unitPriceCents Int // Precio unitario final
+  totalCents     Int // quantity × unitPriceCents
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+// ============================================================================
+// PAGOS
+// ============================================================================
+
+// Registro del pago de un pedido.
+model Payment {
+  id String @id @default(cuid())
+
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  method      PaymentMethod
+  provider    String? // "bank_transfer" | "payphone" | ...
+  providerRef String? // ID externo de la transacción
+
+  // ID de la cuenta bancaria elegida por el cliente.
+  // Valores posibles: "guayaquil" | "pichincha" | "deuna".
+  // Es opcional porque en el futuro podría usarse una pasarela online
+  // (que no tiene cuenta bancaria asociada).
+  // Este campo le dice al admin a qué banco debe llegar la transferencia.
+  bankAccountId String?
+
+  status      PaymentStatus @default(PENDIENTE)
+  amountCents Int // Monto pagado
+
+  // Respuesta cruda del proveedor (auditoría)
+  rawPayload Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Comprobante de pago subido por el cliente (transferencia bancaria).
+// El admin lo revisa y decide si aprobar o rechazar.
+model PaymentProof {
+  id String @id @default(cuid())
+
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  fileUrl   String // Ruta del archivo
+  mimeType  String // "image/jpeg", "application/pdf"
+  sizeBytes Int
+
+  uploadedAt DateTime  @default(now())
+  reviewedBy String? // ID del admin que revisó
+  reviewedAt DateTime?
+  reviewNote String? // Nota (motivo de rechazo, etc.)
+
+  createdAt DateTime @default(now())
+}
+
+// Auditoría de cambios de estado y eventos del pedido.
+model OrderEvent {
+  id String @id @default(cuid())
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  type      String // "ORDER_STATUS_CHANGED", etc.
+  fromValue String? // Valor anterior
+  toValue   String? // Valor nuevo
+  actorId   String? // Quién hizo el cambio
+  note      String? // Nota adicional
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// FAVORITOS (Wishlist)
+// ============================================================================
+
+// Productos marcados como favoritos por un usuario.
+model Favorite {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  // Un usuario solo puede marcar el mismo producto UNA vez
+  @@unique([userId, productId])
+  @@index([userId])
+}
